@@ -8,6 +8,7 @@ import (
 
 	"github.com/loft-sh/vcluster/pkg/scheme"
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
@@ -93,7 +94,26 @@ func (s *multiNamespace) MarkerLabelCluster() string {
 	return SafeConcatName(s.currentNamespace, "x", VClusterName)
 }
 
-func (s *multiNamespace) HostLabelCluster(ctx *synccontext.SyncContext, key string) string {
+func (s *multiNamespace) HostLabelCluster(ctx *synccontext.SyncContext, key string) (retLabel string) {
+	if ctx != nil && ctx.Mappings != nil && ctx.Mappings.Store() != nil {
+		// save whatever outcome in the store
+		defer func() {
+			err := ctx.Mappings.Store().RecordLabelCluster(ctx, synccontext.LabelMapping{
+				Virtual: retLabel,
+				Host:    key,
+			})
+			if err != nil {
+				klog.FromContext(ctx).Error(err, "record cluster-scoped label mapping", "host", key)
+			}
+		}()
+
+		// check if the label is within the store
+		vLabel, ok := ctx.Mappings.Store().HostToVirtualLabelCluster(ctx, key)
+		if ok {
+			return vLabel
+		}
+	}
+
 	if keyMatchesSyncedLabels(ctx, key) {
 		return key
 	}

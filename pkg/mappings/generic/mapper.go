@@ -11,6 +11,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
@@ -69,14 +70,60 @@ func (n *mapper) GroupVersionKind() schema.GroupVersionKind {
 	return n.gvk
 }
 
-func (n *mapper) VirtualToHost(_ *synccontext.SyncContext, req types.NamespacedName, vObj client.Object) types.NamespacedName {
+func (n *mapper) VirtualToHost(ctx *synccontext.SyncContext, req types.NamespacedName, vObj client.Object) (retName types.NamespacedName) {
+	if ctx != nil && ctx.Mappings != nil && ctx.Mappings.Store() != nil {
+		defer func() {
+			err := ctx.Mappings.Store().RecordReference(ctx, synccontext.NameMapping{
+				GroupVersionKind: n.gvk,
+
+				VirtualName: req,
+				HostName:    retName,
+			})
+			if err != nil {
+				klog.FromContext(ctx).Error(err, "record name mapping", "virtual", req)
+			}
+		}()
+
+		// check if mapping is in the store
+		pName, ok := ctx.Mappings.Store().VirtualToHostName(ctx, synccontext.Object{
+			GroupVersionKind: n.gvk,
+			NamespacedName:   req,
+		})
+		if ok {
+			return pName
+		}
+	}
+
 	return types.NamespacedName{
 		Namespace: translate.Default.HostNamespace(req.Namespace),
 		Name:      n.translateName(req.Name, req.Namespace, vObj),
 	}
 }
 
-func (n *mapper) HostToVirtual(ctx *synccontext.SyncContext, req types.NamespacedName, pObj client.Object) types.NamespacedName {
+func (n *mapper) HostToVirtual(ctx *synccontext.SyncContext, req types.NamespacedName, pObj client.Object) (retName types.NamespacedName) {
+	if ctx != nil && ctx.Mappings != nil && ctx.Mappings.Store() != nil {
+		defer func() {
+			err := ctx.Mappings.Store().RecordReference(ctx, synccontext.NameMapping{
+				GroupVersionKind: n.gvk,
+
+				VirtualName: retName,
+				HostName:    req,
+			})
+			if err != nil {
+				klog.FromContext(ctx).Error(err, "record name mapping", "host", req)
+			}
+		}()
+
+		// check if mapping is in the store
+		vName, ok := ctx.Mappings.Store().HostToVirtualName(ctx, synccontext.Object{
+			GroupVersionKind: n.gvk,
+			NamespacedName:   req,
+		})
+		if ok {
+			return vName
+		}
+	}
+
 	if pObj != nil {
 		pAnnotations := pObj.GetAnnotations()
 		if pAnnotations != nil && pAnnotations[translate.NameAnnotation] != "" {

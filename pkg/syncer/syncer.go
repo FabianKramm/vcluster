@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -107,7 +108,7 @@ func (r *SyncController) newSyncContext(ctx context.Context, logName string, eve
 	}
 }
 
-func (r *SyncController) Reconcile(ctx context.Context, origReq ctrl.Request) (_ ctrl.Result, err error) {
+func (r *SyncController) Reconcile(ctx context.Context, origReq ctrl.Request) (_ ctrl.Result, retErr error) {
 	// extract if this was a delete request
 	origReq, isDelete := fromDeleteRequest(origReq)
 
@@ -119,6 +120,11 @@ func (r *SyncController) Reconcile(ctx context.Context, origReq ctrl.Request) (_
 
 	// create sync context
 	syncContext := r.newSyncContext(ctx, origReq.Name, eventSource, isDelete)
+	defer func() {
+		if err := syncContext.Close(); err != nil {
+			retErr = errors.Join(retErr, err)
+		}
+	}()
 
 	// if host request we need to find the virtual object
 	vReq, pReq, err := r.extractRequest(syncContext, origReq)
@@ -149,6 +155,12 @@ func (r *SyncController) Reconcile(ctx context.Context, origReq ctrl.Request) (_
 
 	// retrieve the objects
 	vObj, pObj, err := r.getObjects(syncContext, vReq, pReq)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// add mapping to context
+	syncContext.Context, err = synccontext.WithMappingFromObjects(syncContext.Context, pObj, vObj)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

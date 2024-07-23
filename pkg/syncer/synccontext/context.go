@@ -45,25 +45,6 @@ type ControllerContext struct {
 	Mappings MappingsRegistry
 }
 
-type SyncContext struct {
-	context.Context
-
-	Log loghelper.Logger
-
-	Config *config.VirtualClusterConfig
-
-	PhysicalClient client.Client
-	VirtualClient  client.Client
-
-	Mappings MappingsRegistry
-
-	CurrentNamespace       string
-	CurrentNamespaceClient client.Client
-
-	EventSource EventSource
-	IsDelete    bool
-}
-
 type RegisterContext struct {
 	context.Context
 
@@ -113,14 +94,6 @@ func Cast[T any](ctx *SyncContext, pObj, vObj client.Object) (physical T, virtua
 	}
 	// vObj, pObj, sourceObj (Virtual), targetObj
 	return castedPhysical, castedVirtual, castedVirtual, castedPhysical
-}
-
-func (s *SyncContext) EventFromHost() bool {
-	return s.EventSource == EventSourceHost
-}
-
-func (s *SyncContext) EventFromVirtual() bool {
-	return s.EventSource == EventSourceVirtual
 }
 
 func (c *ControllerContext) ToRegisterContext() *RegisterContext {
