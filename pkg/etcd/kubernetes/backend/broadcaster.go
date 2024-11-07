@@ -3,21 +3,23 @@ package backend
 import (
 	"context"
 	"sync"
+
+	"github.com/loft-sh/vcluster/pkg/etcd/kubernetes/server"
 )
 
 type broadcaster struct {
 	sync.Mutex
 
-	subs map[chan interface{}]struct{}
+	subs map[chan []*server.Event]struct{}
 }
 
-func (b *broadcaster) Subscribe(ctx context.Context) <-chan interface{} {
+func (b *broadcaster) Subscribe(ctx context.Context) <-chan []*server.Event {
 	b.Lock()
 	defer b.Unlock()
 
-	sub := make(chan interface{}, 100)
+	sub := make(chan []*server.Event, 100)
 	if b.subs == nil {
-		b.subs = map[chan interface{}]struct{}{}
+		b.subs = map[chan []*server.Event]struct{}{}
 	}
 	b.subs[sub] = struct{}{}
 	go func() {
@@ -28,7 +30,7 @@ func (b *broadcaster) Subscribe(ctx context.Context) <-chan interface{} {
 	return sub
 }
 
-func (b *broadcaster) Stream(item interface{}) {
+func (b *broadcaster) Stream(item []*server.Event) {
 	b.Lock()
 	for sub := range b.subs {
 		select {
@@ -41,7 +43,7 @@ func (b *broadcaster) Stream(item interface{}) {
 	b.Unlock()
 }
 
-func (b *broadcaster) unsub(sub chan interface{}, lock bool) {
+func (b *broadcaster) unsub(sub chan []*server.Event, lock bool) {
 	if lock {
 		b.Lock()
 	}

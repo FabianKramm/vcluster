@@ -9,6 +9,7 @@ require (
 	github.com/docker/cli v25.0.0+incompatible
 	github.com/docker/docker v25.0.6+incompatible
 	github.com/evanphx/json-patch/v5 v5.9.0
+	github.com/gabstv/go-bsdiff v1.0.5
 	github.com/ghodss/yaml v1.0.0
 	github.com/go-logr/logr v1.4.2
 	github.com/go-openapi/loads v0.21.2
@@ -82,6 +83,7 @@ require (
 	github.com/creack/pty v1.1.21 // indirect
 	github.com/docker/docker-credential-helpers v0.8.1 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20191028211022-135eb7262960 // indirect
+	github.com/dsnet/compress v0.0.0-20171208185109-cc9eb1d7ad76 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.12.1 // indirect
 	github.com/fatih/camelcase v1.0.0 // indirect

@@ -15,6 +15,7 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
+	"k8s.io/client-go/kubernetes"
 )
 
 const (
@@ -25,6 +26,10 @@ type Config struct {
 	Listener            string
 	NotifyInterval      time.Duration
 	EmulatedETCDVersion string
+
+	Client        kubernetes.Interface
+	LabelSelector string
+	Namespace     string
 }
 
 type ETCDConfig struct {
@@ -42,7 +47,7 @@ func Listen(ctx context.Context, config Config) (ETCDConfig, error) {
 	}
 
 	// start the backend
-	backend := backend.NewBackend(backend.NewStorage(backend.NewMemoryPageCache()))
+	backend := backend.NewBackend(backend.NewStorage(backend.NewKubernetesPageCache(config.Client, config.LabelSelector, config.Namespace)))
 	if err := backend.Start(ctx); err != nil {
 		return ETCDConfig{}, errors.Wrap(err, "starting kine backend")
 	}

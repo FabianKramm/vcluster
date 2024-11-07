@@ -40,7 +40,11 @@ func StartK8S(
 	if vConfig.EmbeddedDatabase() {
 		// start embedded mode
 		go func() {
-			_, err := kubernetesbackend.Listen(ctx, kubernetesbackend.Config{})
+			_, err := kubernetesbackend.Listen(ctx, kubernetesbackend.Config{
+				Client:        vConfig.ControlPlaneClient,
+				LabelSelector: "loft.vcluster.com/backing-storage=" + vConfig.Name,
+				Namespace:     vConfig.ControlPlaneNamespace,
+			})
 			if err != nil {
 				klog.Fatalf("Error starting etcd server: %v", err)
 			}

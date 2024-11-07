@@ -5,17 +5,15 @@ import (
 	"context"
 	"fmt"
 	"sync"
-
-	"github.com/loft-sh/vcluster/pkg/etcd/kubernetes/server"
 )
 
-const MaxPageSize = 250 * 1024 // 250KB
+const MaxPageSize = 200 * 1024 // 200KB
 
 type Storage interface {
 	Start(ctx context.Context) error
-	List(ctx context.Context) ([]*server.Event, error)
-	Insert(ctx context.Context, row *server.Event) error
-	Delete(ctx context.Context, row *server.Event) error
+	List(ctx context.Context) ([]*Event, error)
+	Insert(ctx context.Context, row *Event) error
+	Delete(ctx context.Context, revision ...int64) error
 	DbSize(ctx context.Context) int64
 }
 
@@ -58,11 +56,11 @@ func (s *storage) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *storage) List(_ context.Context) ([]*server.Event, error) {
+func (s *storage) List(_ context.Context) ([]*Event, error) {
 	s.m.RLock()
 	defer s.m.RUnlock()
 
-	retRows := make([]*server.Event, 0, len(s.byRow))
+	retRows := make([]*Event, 0, len(s.byRow))
 	for _, page := range s.pageSizeHeap.arr {
 		rows, err := page.Rows()
 		if err != nil {
@@ -75,7 +73,7 @@ func (s *storage) List(_ context.Context) ([]*server.Event, error) {
 	return retRows, nil
 }
 
-func (s *storage) Insert(ctx context.Context, row *server.Event) error {
+func (s *storage) Insert(ctx context.Context, row *Event) error {
 	s.m.Lock()
 	defer s.m.Unlock()
 
@@ -103,39 +101,57 @@ func (s *storage) Insert(ctx context.Context, row *server.Event) error {
 	}
 
 	s.pageSizeHeap.Push(page)
-	s.byRow[row.KV.ModRevision] = page
+	s.byRow[row.Server.KV.ModRevision] = page
 	return nil
 }
 
-func (s *storage) Delete(ctx context.Context, row *server.Event) error {
+func (s *storage) Delete(ctx context.Context, revisions ...int64) error {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	page, ok := s.byRow[row.KV.ModRevision]
-	if !ok {
-		return nil
-	}
-
-	err := page.Delete(ctx, row)
-	if err != nil {
-		return fmt.Errorf("delete from page: %w", err)
-	}
-	delete(s.byRow, row.KV.ModRevision)
-
-	// should delete page?
-	if page.Size() == 0 {
-		err = s.factory.Delete(ctx, page)
-		if err != nil {
-			return fmt.Errorf("delete page: %w", err)
+	// sort by page
+	revisionsByPage := map[Page][]int64{}
+	for _, revision := range revisions {
+		// get page by row
+		page, ok := s.byRow[revision]
+		if !ok {
+			return nil
 		}
 
+		revisionsByPage[page] = append(revisionsByPage[page], revision)
+	}
+
+	// delete per page
+	for page, revisions := range revisionsByPage {
+		// delete from page
+		err := page.Delete(ctx, revisions...)
+		if err != nil {
+			return fmt.Errorf("delete from page: %w", err)
+		}
+
+		// delete revisions
+		for _, revision := range revisions {
+			delete(s.byRow, revision)
+		}
+
+		// remove from heap
 		s.pageSizeHeap.Delete(page)
+
+		// should delete page or re-add to heap?
+		if page.Size() == 0 {
+			err = s.factory.Delete(ctx, page)
+			if err != nil {
+				return fmt.Errorf("delete page: %w", err)
+			}
+		} else {
+			s.pageSizeHeap.Push(page)
+		}
 	}
 
 	return nil
 }
 
-func (s *storage) insertIntoNewPage(ctx context.Context, row *server.Event) error {
+func (s *storage) insertIntoNewPage(ctx context.Context, row *Event) error {
 	minPage, err := s.factory.Create(ctx)
 	if err != nil {
 		return fmt.Errorf("new page: %w", err)
@@ -145,7 +161,7 @@ func (s *storage) insertIntoNewPage(ctx context.Context, row *server.Event) erro
 	if err != nil {
 		return fmt.Errorf("calculate size: %w", err)
 	} else if newSize > MaxPageSize {
-		return fmt.Errorf("row %s is too big to store (%d)", row.KV.Key, newSize)
+		return fmt.Errorf("row %s is too big to store (%d)", row.Server.KV.Key, newSize)
 	}
 
 	err = minPage.Insert(ctx, row)
@@ -168,7 +184,7 @@ func (s *storage) registerPage(page Page) error {
 		return err
 	}
 	for _, row := range rows {
-		s.byRow[row.KV.ModRevision] = page
+		s.byRow[row.Server.KV.ModRevision] = page
 	}
 
 	return nil

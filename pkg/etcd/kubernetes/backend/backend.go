@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +16,13 @@ import (
 	"k8s.io/klog/v2"
 )
 
+const (
+	// keep the last 500 revisions
+	compactMinRetain   = 500
+	compactRevisionKey = "/vcluster/backend/compact-revision"
+	compactInterval    = time.Minute
+)
+
 func NewBackend(storage Storage) server.Backend {
 	return &backend{
 		tracing: false,
@@ -22,12 +31,12 @@ func NewBackend(storage Storage) server.Backend {
 
 		broadcaster: &broadcaster{},
 
-		byKeys: btree.NewBTreeG[*server.Event](func(a, b *server.Event) bool {
-			if a.KV.Key == b.KV.Key {
-				return a.KV.ModRevision < b.KV.ModRevision
+		byKeys: btree.NewBTreeG[*Event](func(a, b *Event) bool {
+			if a.Server.KV.Key == b.Server.KV.Key {
+				return a.Server.KV.ModRevision < b.Server.KV.ModRevision
 			}
 
-			return a.KV.Key < b.KV.Key
+			return a.Server.KV.Key < b.Server.KV.Key
 		}),
 	}
 }
@@ -42,9 +51,10 @@ type backend struct {
 	broadcaster *broadcaster
 
 	lastCompacted   int64
+	lastCompactedID int64
 	currentRevision int64
 
-	byKeys *btree.BTreeG[*server.Event]
+	byKeys *btree.BTreeG[*Event]
 }
 
 func (b *backend) trace(ctx context.Context, msg string, keysAndValues ...interface{}) {
@@ -66,13 +76,24 @@ func (b *backend) Start(ctx context.Context) error {
 		return fmt.Errorf("listing rows: %w", err)
 	}
 
+	// get current revision
 	b.currentRevision = 0
 	for _, row := range rows {
-		if row.KV.ModRevision > b.currentRevision {
-			b.currentRevision = row.KV.ModRevision
+		if row.Server.KV.ModRevision > b.currentRevision {
+			b.currentRevision = row.Server.KV.ModRevision
 		}
 
 		b.byKeys.Set(row)
+	}
+
+	// get the last compacted key
+	b.lastCompacted = 0
+	_, compactRevision, err := b.Get(ctx, compactRevisionKey, 0)
+	if err != nil {
+		return fmt.Errorf("getting compact revision: %w", err)
+	} else if compactRevision != nil {
+		b.lastCompacted, _ = strconv.ParseInt(string(compactRevision.Value), 10, 64)
+		b.lastCompactedID = compactRevision.ModRevision
 	}
 
 	// See https://github.com/kubernetes/kubernetes/blob/442a69c3bdf6fe8e525b05887e57d89db1e2f3a5/staging/src/k8s.io/apiserver/pkg/storage/storagebackend/factory/etcd3.go#L97
@@ -82,8 +103,14 @@ func (b *backend) Start(ctx context.Context) error {
 		}
 	}
 
+	// compact
+	_, err = b.Compact(ctx, b.currentRevision)
+	if err != nil {
+		return fmt.Errorf("compacting database: %w", err)
+	}
+
 	go func() {
-		myTimer := time.NewTicker(time.Second * 10)
+		myTimer := time.NewTicker(compactInterval)
 		defer myTimer.Stop()
 
 		for {
@@ -91,11 +118,10 @@ func (b *backend) Start(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-myTimer.C:
-				dbSize, _ := b.DbSize(ctx)
-				fmt.Println(dbSize/1024, "KB")
-				b.m.RLock()
-				fmt.Println(b.byKeys.Len())
-				b.m.RUnlock()
+				_, err = b.Compact(ctx, b.currentRevision)
+				if err != nil {
+					klog.FromContext(ctx).Error(err, "compacting database")
+				}
 			}
 		}
 	}()
@@ -111,6 +137,10 @@ func (b *backend) Get(ctx context.Context, prefix string, revision int64) (revRe
 	b.m.RLock()
 	defer b.m.RUnlock()
 
+	if revision != 0 && revision <= b.lastCompacted {
+		return b.currentRevision, nil, server.ErrCompacted
+	}
+
 	rev, row, err := b.getLatest(prefix, revision, false)
 	if err != nil {
 		return 0, nil, err
@@ -119,7 +149,7 @@ func (b *backend) Get(ctx context.Context, prefix string, revision int64) (revRe
 		return rev, nil, nil
 	}
 
-	return rev, row.KV, nil
+	return rev, row.Server.KV, nil
 }
 
 func (b *backend) Create(ctx context.Context, key string, value []byte, lease int64) (revRet int64, errRet error) {
@@ -150,17 +180,19 @@ func (b *backend) Create(ctx context.Context, key string, value []byte, lease in
 		},
 	}
 	if prevEvent != nil {
-		if !prevEvent.Delete {
+		if !prevEvent.Server.Delete {
 			return rev, server.ErrKeyExists
 		}
-		newRow.PrevKV = prevEvent.KV
+		newRow.PrevKV = prevEvent.Server.KV
 	}
-	err = b.storage.Insert(ctx, newRow)
+
+	newEvent := fromServerEvent(newRow)
+	err = b.storage.Insert(ctx, newEvent)
 	if err != nil {
 		return 0, fmt.Errorf("inserting row: %w", err)
 	}
 
-	b.byKeys.Set(newRow)
+	b.byKeys.Set(newEvent)
 	b.broadcaster.Stream([]*server.Event{newRow})
 	return newRevision, nil
 }
@@ -180,28 +212,29 @@ func (b *backend) Update(ctx context.Context, key string, value []byte, revision
 	if event == nil {
 		return 0, nil, false, nil
 	}
-	if event.KV.ModRevision != revision {
-		return rev, event.KV, false, nil
+	if event.Server.KV.ModRevision != revision {
+		return rev, event.Server.KV, false, nil
 	}
 
 	newRevision := b.nextRevision()
 	newRow := &server.Event{
 		KV: &server.KeyValue{
 			Key:            key,
-			CreateRevision: event.KV.CreateRevision,
+			CreateRevision: event.Server.KV.CreateRevision,
 			ModRevision:    newRevision,
 			Value:          value,
 			Lease:          lease,
 		},
-		PrevKV: event.KV,
+		PrevKV: event.Server.KV,
 	}
 
-	err = b.storage.Insert(ctx, newRow)
+	newEvent := fromServerEvent(newRow)
+	err = b.storage.Insert(ctx, newEvent)
 	if err != nil {
-		return newRevision, event.KV, false, fmt.Errorf("inserting row: %w", err)
+		return newRevision, event.Server.KV, false, fmt.Errorf("inserting row: %w", err)
 	}
 
-	b.byKeys.Set(newRow)
+	b.byKeys.Set(newEvent)
 	b.broadcaster.Stream([]*server.Event{newRow})
 	return newRevision, newRow.KV, true, err
 }
@@ -221,32 +254,33 @@ func (b *backend) Delete(ctx context.Context, key string, revision int64) (revRe
 	if prevEvent == nil {
 		return rev, nil, true, nil
 	}
-	if prevEvent.Delete {
-		return rev, prevEvent.KV, true, nil
+	if prevEvent.Server.Delete {
+		return rev, prevEvent.Server.KV, true, nil
 	}
-	if revision != 0 && prevEvent.KV.ModRevision != revision {
-		return rev, prevEvent.KV, false, nil
+	if revision != 0 && prevEvent.Server.KV.ModRevision != revision {
+		return rev, prevEvent.Server.KV, false, nil
 	}
 
 	newRevision := b.nextRevision()
 	newRow := &server.Event{
 		Delete: true,
 		KV: &server.KeyValue{
-			Key:            prevEvent.KV.Key,
-			CreateRevision: prevEvent.KV.CreateRevision,
+			Key:            prevEvent.Server.KV.Key,
+			CreateRevision: prevEvent.Server.KV.CreateRevision,
 			ModRevision:    newRevision,
-			Value:          prevEvent.KV.Value,
-			Lease:          prevEvent.KV.Lease,
+			Value:          prevEvent.Server.KV.Value,
+			Lease:          prevEvent.Server.KV.Lease,
 		},
-		PrevKV: prevEvent.KV,
+		PrevKV: prevEvent.Server.KV,
 	}
 
-	err = b.storage.Insert(ctx, newRow)
+	newEvent := fromServerEvent(newRow)
+	err = b.storage.Insert(ctx, newEvent)
 	if err != nil {
-		return newRevision, prevEvent.KV, false, fmt.Errorf("inserting row: %w", err)
+		return newRevision, prevEvent.Server.KV, false, fmt.Errorf("inserting row: %w", err)
 	}
 
-	b.byKeys.Set(newRow)
+	b.byKeys.Set(newEvent)
 	b.broadcaster.Stream([]*server.Event{newRow})
 	return newRevision, newRow.KV, true, nil
 }
@@ -264,6 +298,10 @@ func (b *backend) List(ctx context.Context, prefix, startKey string, limit, revi
 	b.m.RLock()
 	defer b.m.RUnlock()
 
+	if revision != 0 && revision <= b.lastCompacted {
+		return b.currentRevision, nil, server.ErrCompacted
+	}
+
 	rev, retRows, err := b.list(prefix, startKey, limit, revision, false)
 	if err != nil {
 		return rev, nil, err
@@ -271,7 +309,7 @@ func (b *backend) List(ctx context.Context, prefix, startKey string, limit, revi
 
 	retKeyValue := make([]*server.KeyValue, 0, len(retRows))
 	for _, row := range retRows {
-		retKeyValue = append(retKeyValue, row.KV)
+		retKeyValue = append(retKeyValue, row.Server.KV)
 	}
 
 	return b.currentRevision, retKeyValue, nil
@@ -280,6 +318,10 @@ func (b *backend) List(ctx context.Context, prefix, startKey string, limit, revi
 func (b *backend) Count(_ context.Context, prefix, startKey string, revision int64) (int64, int64, error) {
 	b.m.RLock()
 	defer b.m.RUnlock()
+
+	if revision != 0 && revision <= b.lastCompacted {
+		return b.currentRevision, 0, server.ErrCompacted
+	}
 
 	rev, items, err := b.list(prefix, startKey, 0, revision, false)
 	if err != nil {
@@ -325,7 +367,19 @@ func (b *backend) Watch(ctx context.Context, prefix string, revision int64) serv
 		}
 
 		if len(kvs) > 0 {
-			result <- kvs
+			// get preview values
+			kvsConverted := make([]*server.Event, 0, len(kvs))
+			for _, kv := range kvs {
+				kvConverted, err := kv.ToServerEvent()
+				if err != nil {
+					klog.FromContext(ctx).Error(err, "error encoding event")
+					continue
+				}
+
+				kvsConverted = append(kvsConverted, kvConverted)
+			}
+
+			result <- kvsConverted
 		}
 
 		// always ensure we fully read the channel
@@ -377,14 +431,110 @@ func (b *backend) CurrentRevision(_ context.Context) (int64, error) {
 	return b.currentRevision, nil
 }
 
-func (b *backend) Compact(_ context.Context, _ int64) (int64, error) {
-	b.m.RLock()
-	defer b.m.RUnlock()
+func (b *backend) Compact(ctx context.Context, revision int64) (int64, error) {
+	b.m.Lock()
+	defer b.m.Unlock()
 
-	return b.currentRevision, nil
+	revision = safeCompactRev(revision, b.currentRevision)
+	if revision == b.lastCompacted {
+		return revision, nil
+	}
+
+	rowsToDelete := make([]*Event, 0, 200)
+	klog.FromContext(ctx).Info("BEFORE COMPACT", "rows", b.byKeys.Len(), "revision", revision, "dbSize (KB)", b.storage.DbSize(ctx)/1024)
+	defer func() {
+		klog.FromContext(ctx).Info("AFTER COMPACT", "rows", b.byKeys.Len(), "revision", revision, "dbSize (KB)", b.storage.DbSize(ctx)/1024, "deleted rows", len(rowsToDelete))
+	}()
+
+	now := time.Now().Unix()
+	b.byKeys.Ascend(newKeyRevisionIter("/", b.lastCompacted), func(item *Event) bool {
+		if item.Expires > 0 && now >= item.Expires {
+			rowsToDelete = append(rowsToDelete, item)
+		}
+		if item.Server.KV.ModRevision > revision || item.Server.KV.Key == compactRevisionKey {
+			return true
+		}
+
+		if item.Server.Delete {
+			rowsToDelete = append(rowsToDelete, item)
+		}
+
+		if item.Server.PrevKV != nil && item.Server.PrevKV.ModRevision != 0 {
+			prevItem, ok := b.byKeys.Get(&Event{Server: &server.Event{
+				KV: &server.KeyValue{
+					Key:         item.Server.KV.Key,
+					ModRevision: item.Server.PrevKV.ModRevision,
+				},
+			}})
+			if ok {
+				rowsToDelete = append(rowsToDelete, prevItem)
+			}
+		}
+
+		return true
+	})
+
+	if len(rowsToDelete) == 0 {
+		return revision, nil
+	}
+
+	revisions := make([]int64, 0, len(rowsToDelete))
+	for _, row := range rowsToDelete {
+		revisions = append(revisions, row.Server.KV.ModRevision)
+		b.byKeys.Delete(row)
+	}
+
+	err := b.storage.Delete(ctx, revisions...)
+	if err != nil {
+		klog.FromContext(ctx).Error(err, "error deleting rows")
+	}
+
+	b.updateCompactedRows(ctx, revision)
+	return revision, nil
 }
 
-func (b *backend) getLatest(key string, revision int64, includeDeleted bool) (int64, *server.Event, error) {
+func (b *backend) updateCompactedRows(ctx context.Context, revision int64) {
+	// delete existing last compacted
+	if b.lastCompactedID != 0 {
+		err := b.storage.Delete(ctx, b.lastCompactedID)
+		if err != nil {
+			klog.FromContext(ctx).Error(err, "error deleting row", "revision", b.lastCompactedID)
+		}
+		b.byKeys.Delete(&Event{
+			Server: &server.Event{
+				KV: &server.KeyValue{
+					ModRevision: b.lastCompactedID,
+					Key:         compactRevisionKey,
+				},
+			},
+		})
+	}
+
+	// create new last compacted
+	newRevision := b.nextRevision()
+	newCompactedEvent := &Event{
+		Server: &server.Event{
+			Create: true,
+			KV: &server.KeyValue{
+				Key:         compactRevisionKey,
+				ModRevision: newRevision,
+				Value:       []byte(strconv.FormatInt(revision, 10)),
+			},
+			PrevKV: &server.KeyValue{
+				ModRevision: b.lastCompacted,
+			},
+		},
+	}
+	err := b.storage.Insert(ctx, newCompactedEvent)
+	if err != nil {
+		klog.FromContext(ctx).Error(err, "error inserting row", "row", newCompactedEvent)
+	}
+	b.lastCompacted = revision
+	b.lastCompactedID = newRevision
+	b.byKeys.Set(newCompactedEvent)
+}
+
+func (b *backend) getLatest(key string, revision int64, includeDeleted bool) (int64, *Event, error) {
 	rev, items, err := b.list(key, "", 1, revision, includeDeleted)
 	if err != nil {
 		return rev, nil, err
@@ -395,12 +545,9 @@ func (b *backend) getLatest(key string, revision int64, includeDeleted bool) (in
 	return rev, items[0], nil
 }
 
-func (b *backend) list(prefix, startKey string, limit, revision int64, includeDeleted bool) (int64, []*server.Event, error) {
+func (b *backend) list(prefix, startKey string, limit, revision int64, includeDeleted bool) (int64, []*Event, error) {
 	if revision > b.currentRevision {
 		return b.currentRevision, nil, server.ErrFutureRev
-	}
-	if revision != 0 && revision <= b.lastCompacted {
-		return b.currentRevision, nil, server.ErrCompacted
 	}
 
 	checkPrefix := strings.HasSuffix(prefix, "/")
@@ -409,49 +556,65 @@ func (b *backend) list(prefix, startKey string, limit, revision int64, includeDe
 	}
 
 	started := false
-	retRows := map[string]*server.Event{}
-	b.byKeys.Ascend(newKeyRevisionIter(prefix, revision), func(item *server.Event) bool {
-		if checkPrefix && !strings.HasPrefix(item.KV.Key, prefix) {
+	retRows := map[string]*Event{}
+	b.byKeys.Ascend(newKeyRevisionIter(prefix, revision), func(item *Event) bool {
+		if checkPrefix && !strings.HasPrefix(item.Server.KV.Key, prefix) {
 			return false
 		}
-		if !checkPrefix && item.KV.Key != prefix {
+		if !checkPrefix && item.Server.KV.Key != prefix {
 			return false
 		}
-		if revision != 0 && item.KV.ModRevision < revision {
+		if revision != 0 && item.Server.KV.ModRevision < revision {
 			return true
 		}
 
 		// check if started
 		if !started {
-			if startKey == "" || item.KV.Key == startKey {
+			if startKey == "" || item.Server.KV.Key == startKey {
 				started = true
 			} else {
 				return true
 			}
 		}
 
-		if item.Delete && !includeDeleted {
-			delete(retRows, item.KV.Key)
+		if item.Server.Delete && !includeDeleted {
+			delete(retRows, item.Server.KV.Key)
 		} else {
-			_, ok := retRows[item.KV.Key]
+			_, ok := retRows[item.Server.KV.Key]
 			if !ok && limit > 0 && len(retRows) >= int(limit) {
 				return false
 			}
 
-			retRows[item.KV.Key] = item
+			retRows[item.Server.KV.Key] = item
 		}
 
 		return true
 	})
 
-	retRowsArr := make([]*server.Event, 0, len(retRows))
+	retRowsArr := make([]*Event, 0, len(retRows))
 	for _, row := range retRows {
 		retRowsArr = append(retRowsArr, row)
 	}
 
+	sort.Slice(retRowsArr, func(i, j int) bool {
+		return retRowsArr[i].Server.KV.CreateRevision < retRowsArr[j].Server.KV.CreateRevision
+	})
+
 	return b.currentRevision, retRowsArr, nil
 }
 
-func newKeyRevisionIter(key string, revision int64) *server.Event {
-	return &server.Event{KV: &server.KeyValue{Key: key, ModRevision: revision}}
+func newKeyRevisionIter(key string, revision int64) *Event {
+	return &Event{Server: &server.Event{KV: &server.KeyValue{Key: key, ModRevision: revision}}}
+}
+
+// safeCompactRev ensures that we never compact the most recent 1000 revisions.
+func safeCompactRev(targetCompactRev int64, currentRev int64) int64 {
+	safeRev := currentRev - compactMinRetain
+	if targetCompactRev < safeRev {
+		safeRev = targetCompactRev
+	}
+	if safeRev < 0 {
+		safeRev = 0
+	}
+	return safeRev
 }

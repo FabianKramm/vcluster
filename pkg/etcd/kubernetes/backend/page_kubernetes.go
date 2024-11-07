@@ -1,14 +1,9 @@
 package backend
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/base64"
-	"encoding/gob"
-	"io"
 
-	"github.com/loft-sh/vcluster/pkg/etcd/kubernetes/server"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -18,12 +13,12 @@ const secretDataKey = "payload"
 
 type Page interface {
 	Size() int
-	SizeWithRow(row *server.Event) (int, error)
+	SizeWithRow(row *Event) (int, error)
 
-	Rows() ([]*server.Event, error)
+	Rows() ([]*Event, error)
 
-	Insert(ctx context.Context, row *server.Event) error
-	Delete(ctx context.Context, row *server.Event) error
+	Insert(ctx context.Context, row *Event) error
+	Delete(ctx context.Context, revision ...int64) error
 }
 
 func newKubernetesPage(client kubernetes.Interface, secret *corev1.Secret) Page {
@@ -47,13 +42,13 @@ type kubernetesPage struct {
 	size int
 }
 
-func (p *kubernetesPage) Rows() ([]*server.Event, error) {
+func (p *kubernetesPage) Rows() ([]*Event, error) {
 	rowMap, err := p.decode()
 	if err != nil {
 		return nil, err
 	}
 
-	retArr := make([]*server.Event, 0, len(rowMap))
+	retArr := make([]*Event, 0, len(rowMap))
 	for _, row := range rowMap {
 		retArr = append(retArr, row)
 	}
@@ -61,18 +56,20 @@ func (p *kubernetesPage) Rows() ([]*server.Event, error) {
 	return retArr, nil
 }
 
-func (p *kubernetesPage) Delete(ctx context.Context, row *server.Event) error {
+func (p *kubernetesPage) Delete(ctx context.Context, revisions ...int64) error {
 	rowMap, err := p.decode()
 	if err != nil {
 		return err
 	}
 
 	// doesn't exist?
-	if rowMap[row.KV.ModRevision] == nil {
+	beforeLength := len(rowMap)
+	for _, revision := range revisions {
+		delete(rowMap, revision)
+	}
+	if len(rowMap) == beforeLength {
 		return nil
 	}
-
-	delete(rowMap, row.KV.ModRevision)
 
 	// if empty delete the complete data
 	newSecret := p.secret.DeepCopy()
@@ -98,13 +95,13 @@ func (p *kubernetesPage) Delete(ctx context.Context, row *server.Event) error {
 	return nil
 }
 
-func (p *kubernetesPage) Insert(ctx context.Context, row *server.Event) error {
+func (p *kubernetesPage) Insert(ctx context.Context, row *Event) error {
 	rowMap, err := p.decode()
 	if err != nil {
 		return err
 	}
 
-	rowMap[row.KV.ModRevision] = row
+	rowMap[row.Server.KV.ModRevision] = row
 	encoded, err := encode(rowMap)
 	if err != nil {
 		return err
@@ -125,13 +122,13 @@ func (p *kubernetesPage) Insert(ctx context.Context, row *server.Event) error {
 	return nil
 }
 
-func (p *kubernetesPage) SizeWithRow(row *server.Event) (int, error) {
+func (p *kubernetesPage) SizeWithRow(row *Event) (int, error) {
 	rowMap, err := p.decode()
 	if err != nil {
 		return 0, err
 	}
 
-	rowMap[row.KV.ModRevision] = row
+	rowMap[row.Server.KV.ModRevision] = row
 	encoded, err := encode(rowMap)
 	if err != nil {
 		return 0, err
@@ -144,72 +141,10 @@ func (p *kubernetesPage) Size() int {
 	return p.size
 }
 
-func (p *kubernetesPage) decode() (map[int64]*server.Event, error) {
+func (p *kubernetesPage) decode() (map[int64]*Event, error) {
 	if p.secret.Data == nil {
-		return make(map[int64]*server.Event), nil
+		return make(map[int64]*Event), nil
 	}
 
 	return decode(p.secret.Data[secretDataKey])
-}
-
-func decode(compressedPayload []byte) (map[int64]*server.Event, error) {
-	payload, err := decompress(compressedPayload)
-	if err != nil {
-		return nil, err
-	}
-
-	retMap := map[int64]*server.Event{}
-	err = gob.NewDecoder(bytes.NewReader(payload)).Decode(&retMap)
-	if err != nil {
-		return nil, err
-	}
-
-	return retMap, nil
-}
-
-func encode(m map[int64]*server.Event) ([]byte, error) {
-	var buf bytes.Buffer
-	err := gob.NewEncoder(&buf).Encode(m)
-	if err != nil {
-		return nil, err
-	}
-
-	return compress(buf.Bytes())
-}
-
-func decompress(payload []byte) ([]byte, error) {
-	rdata := bytes.NewReader(payload)
-	r, err := gzip.NewReader(rdata)
-	if err != nil {
-		return nil, err
-	}
-
-	decompressed, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-
-	return decompressed, nil
-}
-
-func compress(s []byte) ([]byte, error) {
-	var b bytes.Buffer
-	gz := gzip.NewWriter(&b)
-
-	_, err := gz.Write(s)
-	if err != nil {
-		return nil, err
-	}
-
-	err = gz.Flush()
-	if err != nil {
-		return nil, err
-	}
-
-	err = gz.Close()
-	if err != nil {
-		return nil, err
-	}
-
-	return b.Bytes(), nil
 }

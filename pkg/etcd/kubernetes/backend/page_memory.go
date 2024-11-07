@@ -5,20 +5,18 @@ import (
 	"encoding/base64"
 	"maps"
 	"sync"
-
-	"github.com/loft-sh/vcluster/pkg/etcd/kubernetes/server"
 )
 
 func newMemoryPage() Page {
 	return &memoryPage{
-		rows: map[int64]*server.Event{},
+		rows: map[int64]*Event{},
 	}
 }
 
 type memoryPage struct {
 	m sync.RWMutex
 
-	rows map[int64]*server.Event
+	rows map[int64]*Event
 }
 
 func (m *memoryPage) Size() int {
@@ -29,21 +27,21 @@ func (m *memoryPage) Size() int {
 	return len(base64.StdEncoding.EncodeToString(bytes))
 }
 
-func (m *memoryPage) SizeWithRow(e *server.Event) (int, error) {
+func (m *memoryPage) SizeWithRow(e *Event) (int, error) {
 	m.m.RLock()
 	defer m.m.RUnlock()
 
 	clonedMaps := maps.Clone(m.rows)
-	clonedMaps[e.KV.ModRevision] = e
+	clonedMaps[e.Server.KV.ModRevision] = e
 	bytes, _ := encode(clonedMaps)
 	return len(base64.StdEncoding.EncodeToString(bytes)), nil
 }
 
-func (m *memoryPage) Rows() ([]*server.Event, error) {
+func (m *memoryPage) Rows() ([]*Event, error) {
 	m.m.RLock()
 	defer m.m.RUnlock()
 
-	retRows := make([]*server.Event, 0, len(m.rows))
+	retRows := make([]*Event, 0, len(m.rows))
 	for _, row := range m.rows {
 		retRows = append(retRows, row)
 	}
@@ -51,18 +49,20 @@ func (m *memoryPage) Rows() ([]*server.Event, error) {
 	return retRows, nil
 }
 
-func (m *memoryPage) Insert(_ context.Context, row *server.Event) error {
+func (m *memoryPage) Insert(_ context.Context, row *Event) error {
 	m.m.Lock()
 	defer m.m.Unlock()
 
-	m.rows[row.KV.ModRevision] = row
+	m.rows[row.Server.KV.ModRevision] = row
 	return nil
 }
 
-func (m *memoryPage) Delete(_ context.Context, row *server.Event) error {
+func (m *memoryPage) Delete(_ context.Context, revisions ...int64) error {
 	m.m.Lock()
 	defer m.m.Unlock()
 
-	delete(m.rows, row.KV.ModRevision)
+	for _, revision := range revisions {
+		delete(m.rows, revision)
+	}
 	return nil
 }

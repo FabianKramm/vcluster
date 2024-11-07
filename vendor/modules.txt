@@ -120,6 +120,14 @@ github.com/docker/docker-credential-helpers/credentials
 # github.com/dprotaso/go-yit v0.0.0-20191028211022-135eb7262960
 ## explicit; go 1.13
 github.com/dprotaso/go-yit
+# github.com/dsnet/compress v0.0.0-20171208185109-cc9eb1d7ad76
+## explicit
+github.com/dsnet/compress
+github.com/dsnet/compress/bzip2
+github.com/dsnet/compress/bzip2/internal/sais
+github.com/dsnet/compress/internal
+github.com/dsnet/compress/internal/errors
+github.com/dsnet/compress/internal/prefix
 # github.com/dustin/go-humanize v1.0.1
 ## explicit; go 1.16
 github.com/dustin/go-humanize
@@ -154,6 +162,11 @@ github.com/fsnotify/fsnotify
 # github.com/fxamacker/cbor/v2 v2.7.0
 ## explicit; go 1.17
 github.com/fxamacker/cbor/v2
+# github.com/gabstv/go-bsdiff v1.0.5
+## explicit
+github.com/gabstv/go-bsdiff/pkg/bsdiff
+github.com/gabstv/go-bsdiff/pkg/bspatch
+github.com/gabstv/go-bsdiff/pkg/util
 # github.com/ghodss/yaml v1.0.0
 ## explicit
 github.com/ghodss/yaml
