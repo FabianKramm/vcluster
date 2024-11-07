@@ -13,8 +13,8 @@ import (
 
 	vclusterconfig "github.com/loft-sh/vcluster/config"
 	"github.com/loft-sh/vcluster/pkg/config"
-	"github.com/loft-sh/vcluster/pkg/constants"
 	"github.com/loft-sh/vcluster/pkg/etcd"
+	kubernetesbackend "github.com/loft-sh/vcluster/pkg/etcd/kubernetes"
 	"github.com/loft-sh/vcluster/pkg/pro"
 	"github.com/loft-sh/vcluster/pkg/util/commandwriter"
 	"golang.org/x/sync/errgroup"
@@ -38,7 +38,16 @@ func StartK8S(
 		etcdCertificates *etcd.Certificates
 	)
 	if vConfig.EmbeddedDatabase() {
-		dataSource := vConfig.ControlPlane.BackingStore.Database.External.DataSource
+		// start embedded mode
+		go func() {
+			_, err := kubernetesbackend.Listen(ctx, kubernetesbackend.Config{})
+			if err != nil {
+				klog.Fatalf("Error starting etcd server: %v", err)
+			}
+		}()
+
+		etcdEndpoints = kubernetesbackend.ListenerSocket
+		/*dataSource := vConfig.ControlPlane.BackingStore.Database.External.DataSource
 		if dataSource == "" {
 			dataSource = "sqlite:///data/state.db?_journal=WAL&cache=shared&_busy_timeout=30000"
 		}
@@ -61,7 +70,7 @@ func StartK8S(
 			}
 		}()
 
-		etcdEndpoints = constants.K8sKineEndpoint
+		etcdEndpoints = constants.K8sKineEndpoint*/
 	} else if vConfig.ControlPlane.BackingStore.Database.External.Enabled {
 		// we check for an empty datasource string here because the platform connect
 		// process may overwrite an empty datasource string with a platform supplied

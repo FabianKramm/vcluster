@@ -1,6 +1,7 @@
 package specialservices
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
@@ -70,7 +71,7 @@ func SyncKubernetesService(
 			// delete & create with correct ClusterIP
 			err = ctx.VirtualClient.Delete(ctx, vObj)
 			if err != nil {
-				return err
+				return fmt.Errorf("delete kubernetes service: %w", err)
 			}
 
 			// make sure we don't set the resource version during create
@@ -79,13 +80,13 @@ func SyncKubernetesService(
 			// create the new service with the correct cluster ip
 			err = ctx.VirtualClient.Create(ctx, newService)
 			if err != nil {
-				return err
+				return fmt.Errorf("create kubernetes service: %w", err)
 			}
 		} else {
 			// delete & create with correct ClusterIP
 			err = ctx.VirtualClient.Update(ctx, newService)
 			if err != nil {
-				return err
+				return fmt.Errorf("update kubernetes service: %w", err)
 			}
 		}
 	}

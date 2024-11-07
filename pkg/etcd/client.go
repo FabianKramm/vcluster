@@ -8,6 +8,7 @@ import (
 	vconfig "github.com/loft-sh/vcluster/config"
 	"github.com/loft-sh/vcluster/pkg/config"
 	"github.com/loft-sh/vcluster/pkg/constants"
+	kubernetesbackend "github.com/loft-sh/vcluster/pkg/etcd/kubernetes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -61,7 +62,8 @@ func NewFromConfig(ctx context.Context, vConfig *config.VirtualClusterConfig) (C
 			etcdEndpoints = "https://" + vConfig.Name + "-etcd:2379"
 		}
 	} else if vConfig.Distro() == vconfig.K8SDistro {
-		etcdEndpoints = constants.K8sKineEndpoint
+		// etcdEndpoints = constants.K8sKineEndpoint
+		etcdEndpoints = kubernetesbackend.ListenerSocket
 	} else if vConfig.Distro() == vconfig.K3SDistro {
 		etcdEndpoints = constants.K3sKineEndpoint
 	} else if vConfig.Distro() == vconfig.K0SDistro {
