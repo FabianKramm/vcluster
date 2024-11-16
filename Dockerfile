@@ -10,12 +10,40 @@ ARG TARGETARCH
 ARG BUILD_VERSION=dev
 ARG TELEMETRY_PRIVATE_KEY=""
 ARG HELM_VERSION="v3.16.2"
-
-# Install kubectl for development
-RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/${TARGETARCH}/kubectl && chmod +x ./kubectl && mv ./kubectl /usr/local/bin/kubectl
+ARG CONTAINERD_VERSION="1.7.23"
+ARG RUNC_VERSION="v1.1.15"
+ARG KUBERNETES_VERSION="v1.31.1"
 
 # Install helm binary
 RUN curl -s https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz > helm3.tar.gz && tar -zxvf helm3.tar.gz linux-${TARGETARCH}/helm && chmod +x linux-${TARGETARCH}/helm && mv linux-${TARGETARCH}/helm /usr/local/bin/helm && rm helm3.tar.gz && rm -R linux-${TARGETARCH}
+
+# Install containerd
+RUN curl -L -o containerd.tgz https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-${TARGETARCH}.tar.gz && \
+    tar -zxvf containerd.tgz bin && \
+	chmod +x bin/containerd-shim-runc-v2 && mv bin/containerd-shim-runc-v2 /usr/local/bin && \
+	chmod +x bin/containerd && mv bin/containerd /usr/local/bin && \
+	chmod +x bin/ctr && mv bin/ctr /usr/local/bin && \
+	rm containerd.tgz && rm -rf bin
+
+# Install runc
+RUN curl -L -o runc https://github.com/opencontainers/runc/releases/download/${RUNC_VERSION}/runc.${TARGETARCH} && \
+	chmod +x runc && mv runc /usr/local/bin
+
+# Install kubernetes
+RUN curl -L -o kubelet https://dl.k8s.io/${KUBERNETES_VERSION}/bin/linux/${TARGETARCH}/kubelet && \
+    curl -L -o kube-proxy https://dl.k8s.io/${KUBERNETES_VERSION}/bin/linux/${TARGETARCH}/kube-proxy && \
+    curl -L -o kubeadm https://dl.k8s.io/${KUBERNETES_VERSION}/bin/linux/${TARGETARCH}/kubeadm && \
+    curl -L -o kubectl https://dl.k8s.io/${KUBERNETES_VERSION}/bin/linux/${TARGETARCH}/kubectl && \
+    curl -L -o kube-apiserver https://dl.k8s.io/${KUBERNETES_VERSION}/bin/linux/${TARGETARCH}/kube-apiserver && \
+    curl -L -o kube-controller-manager https://dl.k8s.io/${KUBERNETES_VERSION}/bin/linux/${TARGETARCH}/kube-controller-manager && \
+    curl -L -o kube-scheduler https://dl.k8s.io/${KUBERNETES_VERSION}/bin/linux/${TARGETARCH}/kube-scheduler && \
+	chmod +x kube-scheduler && mv kube-scheduler /usr/local/bin && \
+	chmod +x kube-controller-manager && mv kube-controller-manager /usr/local/bin && \
+	chmod +x kube-apiserver && mv kube-apiserver /usr/local/bin && \
+	chmod +x kubectl && mv kubectl /usr/local/bin && \
+	chmod +x kubelet && mv kubelet /usr/local/bin && \
+	chmod +x kubeadm && mv kubeadm /usr/local/bin && \
+	chmod +x kube-proxy && mv kube-proxy /usr/local/bin
 
 # Install Delve for debugging
 RUN if [ "${TARGETARCH}" = "amd64" ] || [ "${TARGETARCH}" = "arm64" ]; then go install github.com/go-delve/delve/cmd/dlv@latest; fi

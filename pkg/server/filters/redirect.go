@@ -24,6 +24,10 @@ import (
 )
 
 func WithRedirect(h http.Handler, registerCtx *synccontext.RegisterContext, uncachedVirtualClient client.Client, admit admission.Interface, resources []delegatingauthorizer.GroupVersionResourceVerb) http.Handler {
+	if registerCtx.Config.Experimental.SyncSettings.DisableSync {
+		return h
+	}
+
 	s := serializer.NewCodecFactory(scheme.Scheme)
 	parameterCodec := runtime.NewParameterCodec(uncachedVirtualClient.Scheme())
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

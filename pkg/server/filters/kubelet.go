@@ -11,6 +11,10 @@ import (
 )
 
 func WithFakeKubelet(h http.Handler, registerCtx *synccontext.RegisterContext) http.Handler {
+	if registerCtx.Config.Experimental.SyncSettings.DisableSync {
+		return h
+	}
+
 	s := serializer.NewCodecFactory(scheme.Scheme)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		nodeName, found := NodeNameFrom(req.Context())

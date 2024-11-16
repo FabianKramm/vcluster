@@ -36,6 +36,10 @@ import (
 )
 
 func WithMetricsProxy(h http.Handler, registerCtx *synccontext.RegisterContext) http.Handler {
+	if registerCtx.Config.Experimental.SyncSettings.DisableSync {
+		return h
+	}
+
 	s := serializer.NewCodecFactory(scheme.Scheme)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		info, ok := request.RequestInfoFrom(req.Context())

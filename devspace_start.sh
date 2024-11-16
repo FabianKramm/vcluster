@@ -35,6 +35,7 @@ ${COLOR_CYAN}TIP:${COLOR_RESET} hit an up arrow on your keyboard to find the com
 "
 # add useful commands to the history for convenience
 export HISTFILE=/tmp/.bash_history
+export DEVELOPMENT=true
 history -s $DEBUG_CMD
 history -s $RUN_CMD
 history -a

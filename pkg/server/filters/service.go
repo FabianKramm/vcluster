@@ -28,6 +28,10 @@ import (
 )
 
 func WithServiceCreateRedirect(handler http.Handler, registerCtx *synccontext.RegisterContext, uncachedLocalClient, uncachedVirtualClient client.Client) http.Handler {
+	if registerCtx.Config.Experimental.SyncSettings.DisableSync {
+		return handler
+	}
+
 	decoder := encoding.NewDecoder(scheme.Scheme, false)
 	s := serializer.NewCodecFactory(scheme.Scheme)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
