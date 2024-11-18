@@ -13,9 +13,36 @@ ARG HELM_VERSION="v3.16.2"
 ARG CONTAINERD_VERSION="1.7.23"
 ARG RUNC_VERSION="v1.1.15"
 ARG KUBERNETES_VERSION="v1.31.1"
+ARG FLANNELD_VERSION="v0.26.1"
+ARG FLANNEL_VERSION="v1.6.0-flannel1"
+ARG CNI_PLUGINS="v1.6.0"
 
 # Install helm binary
 RUN curl -s https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz > helm3.tar.gz && tar -zxvf helm3.tar.gz linux-${TARGETARCH}/helm && chmod +x linux-${TARGETARCH}/helm && mv linux-${TARGETARCH}/helm /usr/local/bin/helm && rm helm3.tar.gz && rm -R linux-${TARGETARCH}
+
+# Install flanneld
+RUN curl -L -o flanneld.tgz https://github.com/flannel-io/flannel/releases/download/${FLANNELD_VERSION}/flannel-${FLANNELD_VERSION}-linux-${TARGETARCH}.tar.gz && \
+    mkdir flanneld && tar -zxvf flanneld.tgz -C flanneld && \
+    mv flanneld/flanneld /usr/local/bin && \
+    rm flanneld.tgz && rm -rf flanneld
+
+# Install flannel
+RUN curl -L -o flannel.tgz https://github.com/flannel-io/cni-plugin/releases/download/${FLANNEL_VERSION}/cni-plugin-flannel-linux-${TARGETARCH}-${FLANNEL_VERSION}.tgz && \
+    tar -zxvf flannel.tgz && \
+    mkdir -p /opt/cni/bin && \
+    mv flannel-${TARGETARCH} /opt/cni/bin/flannel && \
+    rm flannel.tgz
+
+# Install cni plugins
+RUN curl -L -o cni.tgz https://github.com/containernetworking/plugins/releases/download/${CNI_PLUGINS}/cni-plugins-linux-${TARGETARCH}-${CNI_PLUGINS}.tgz && \
+    mkdir cni && tar -zxvf cni.tgz -C cni && \
+    mv cni/loopback /opt/cni/bin && \
+    mv cni/portmap /opt/cni/bin && \
+    mv cni/bandwidth /opt/cni/bin && \
+    mv cni/bridge /opt/cni/bin && \
+    mv cni/firewall /opt/cni/bin && \
+    mv cni/host-local /opt/cni/bin && \
+    rm cni.tgz && rm -rf cni
 
 # Install containerd
 RUN curl -L -o containerd.tgz https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-${TARGETARCH}.tar.gz && \
@@ -47,6 +74,9 @@ RUN curl -L -o kubelet https://dl.k8s.io/${KUBERNETES_VERSION}/bin/linux/${TARGE
 
 # Install Delve for debugging
 RUN if [ "${TARGETARCH}" = "amd64" ] || [ "${TARGETARCH}" = "arm64" ]; then go install github.com/go-delve/delve/cmd/dlv@latest; fi
+
+# Install iptables for kube-proxy
+RUN apt update && apt install -y iptables
 
 # Install kine
 COPY --from=kine /bin/kine /usr/local/bin/kine

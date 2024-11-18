@@ -60,13 +60,13 @@ require (
 	k8s.io/apiserver v0.31.1
 	k8s.io/cli-runtime v0.31.1
 	k8s.io/client-go v0.31.1
+	k8s.io/cloud-provider v0.31.1
 	k8s.io/component-helpers v0.31.1
 	k8s.io/cri-api v0.31.1
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/kube-aggregator v0.31.1
 	k8s.io/kubectl v0.31.1
 	k8s.io/kubelet v0.31.1
-	k8s.io/kubernetes v1.31.2
 	k8s.io/metrics v0.31.1
 	k8s.io/pod-security-admission v0.31.1
 	k8s.io/utils v0.0.0-20240921022957-49e7df575cb6
@@ -146,6 +146,7 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20240930140551-af27646dc61f // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240930140551-af27646dc61f // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
+	k8s.io/controller-manager v0.31.1 // indirect
 	k8s.io/kms v0.31.1 // indirect
 	mvdan.cc/sh/v3 v3.6.0 // indirect
 )
@@ -240,7 +241,7 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0
-	k8s.io/component-base v0.31.1 // indirect
+	k8s.io/component-base v0.31.1
 	k8s.io/kube-openapi v0.0.0-20240903163716-9e1beecbcb38 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.30.3 // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect

@@ -28,7 +28,11 @@ deployments:
       chart:
         name: ./chart
       values:
-        serviceCIDR: 10.96.0.0/24
+        serviceCIDR: 10.96.0.0/12
+        sync:
+          fromHost:
+            nodes:
+              enabled: true
         experimental:
           syncSettings:
             disableSync: true

@@ -130,11 +130,11 @@ func writeCertificateAuthorityFilesIfNotExist(pkiDir string, baseName string, ca
 	return nil
 }
 
-// writeCertificateFilesIfNotExist write a new certificate to the given path.
+// WriteCertificateFilesIfNotExist write a new certificate to the given path.
 // If there already is a certificate file at the given path; kubeadm tries to load it and check if the values in the
 // existing and the expected certificate equals. If they do; kubeadm will just skip writing the file as it's up-to-date,
 // otherwise this function returns an error.
-func writeCertificateFilesIfNotExist(pkiDir string, baseName string, signingCert *x509.Certificate, cert *x509.Certificate, key crypto.Signer, cfg *CertConfig) error {
+func WriteCertificateFilesIfNotExist(pkiDir string, baseName string, signingCert *x509.Certificate, cert *x509.Certificate, key crypto.Signer, cfg *CertConfig) error {
 	// Checks if the signed certificate exists in the PKI directory
 	if CertOrKeyExist(pkiDir, baseName) {
 		// Try to load key from the PKI directory

@@ -26,7 +26,7 @@ func GenServingCerts(caCertFile, caKeyFile string, currentCert, currentKey []byt
 
 	altNames := &certhelper.AltNames{
 		DNSNames: dnsNames,
-		IPs:      []net.IP{net.ParseIP("127.0.0.1")},
+		IPs:      []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("10.96.0.1")},
 	}
 
 	addSANs(altNames, SANs)

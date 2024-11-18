@@ -12,18 +12,22 @@ import (
 	"k8s.io/klog/v2"
 )
 
-func RunCommand(ctx context.Context, command []string, component string) error {
+func RunCommand(ctx context.Context, command []string, component string, extraEnv ...string) error {
 	writer, err := commandwriter.NewCommandWriter(component, false)
 	if err != nil {
 		return err
 	}
 	defer writer.Writer()
 
+	env := os.Environ()
+	env = append(env, extraEnv...)
+
 	// start the command
 	klog.InfoS("Starting "+component, "args", strings.Join(command, " "))
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Stdout = writer.Writer()
 	cmd.Stderr = writer.Writer()
+	cmd.Env = env
 	cmd.Cancel = func() error {
 		err := cmd.Process.Signal(os.Interrupt)
 		if err != nil {

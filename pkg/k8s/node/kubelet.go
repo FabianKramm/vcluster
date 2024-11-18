@@ -3,49 +3,53 @@ package node
 import (
 	"bufio"
 	"context"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 
 	"github.com/ghodss/yaml"
+	"github.com/loft-sh/vcluster/pkg/certs"
 	"github.com/loft-sh/vcluster/pkg/k8s/command"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
+	certutil "k8s.io/client-go/util/cert"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/kubelet/certificate/bootstrap"
 	"k8s.io/utils/ptr"
 
 	kubeletv1beta1 "k8s.io/kubelet/config/v1beta1"
 )
 
 const (
-	kubeletDataDir    = "/data/kubelet/root"
-	kubeletCertDir    = "/data/kubelet/pki"
-	kubeletKubeConfig = "/data/kubelet/pki/kube-config.yaml"
-	kubeletConfig     = "/data/kubelet/kubelet-config.yaml"
+	KubeletDataDir     = "/data/kubelet/root"
+	KubeletCertDir     = "/data/kubelet/pki"
+	KubeletTLSCertFile = "/data/kubelet/pki/kubelet-serving.crt"
+	KubeletTLSKeyFile  = "/data/kubelet/pki/kubelet-serving.key"
+	KubeletKubeConfig  = "/data/kubelet/pki/kube-config.yaml"
+	KubeletConfig      = "/data/kubelet/kubelet-config.yaml"
 )
 
-func StartKubelet(ctx context.Context, eg *errgroup.Group, caCertPath, kubeConfigPath, nodeName string) error {
+func StartKubelet(ctx context.Context, eg *errgroup.Group, caCertPath, nodeName, podCIDR string) error {
 	// write kubelet certs
-	err := writeKubeletCerts(ctx, kubeConfigPath, nodeName)
+	err := writeKubeletCerts(nodeName, caCertPath)
 	if err != nil {
 		return err
 	}
 
 	// write kubelet config
-	err = writeKubeletConfig(kubeletConfig, caCertPath)
+	err = writeKubeletConfig(ctx, KubeletConfig, caCertPath, podCIDR)
 	if err != nil {
 		return fmt.Errorf("write kubelet config: %w", err)
 	}
 
 	// start kubelet command
 	eg.Go(func() error {
-		err := os.MkdirAll(kubeletDataDir, 0755)
+		err := os.MkdirAll(KubeletDataDir, 0755)
 		if err != nil {
 			return fmt.Errorf("make kubelet dir: %w", err)
 		}
@@ -53,25 +57,14 @@ func StartKubelet(ctx context.Context, eg *errgroup.Group, caCertPath, kubeConfi
 		// build flags
 		args := []string{}
 		args = append(args, "/usr/local/bin/kubelet")
-		args = append(args, "--root-dir="+kubeletDataDir)
-		args = append(args, "--cert-dir="+kubeletCertDir)
-		args = append(args, "--config="+kubeletConfig)
-		args = append(args, "--kubeconfig="+kubeletKubeConfig)
+		args = append(args, "--root-dir="+KubeletDataDir)
+		args = append(args, "--config="+KubeletConfig)
+		args = append(args, "--kubeconfig="+KubeletKubeConfig)
 		args = append(args, "--containerd="+containerdSock)
 		args = append(args, "--hostname-override="+nodeName)
 
-		// figure out cgroups
-		kubeletRoot, runtimeRoot, controllers := CheckCgroups()
-		if !controllers["cpu"] {
-			klog.FromContext(ctx).Info("Disabling CPU quotas due to missing cpu controller or cpu.cfs_period_us")
-			args = append(args, "--cpu-cfs-quota=false")
-		}
-		if !controllers["pids"] {
-			klog.Fatal("pids cgroup controller not found")
-		}
-		if kubeletRoot != "" {
-			args = append(args, "--kubelet-cgroups="+kubeletRoot)
-		}
+		// runtime cgroups
+		_, runtimeRoot, _ := CheckCgroups()
 		if runtimeRoot != "" {
 			args = append(args, "--runtime-cgroups="+runtimeRoot)
 		}
@@ -89,41 +82,87 @@ func StartKubelet(ctx context.Context, eg *errgroup.Group, caCertPath, kubeConfi
 	return nil
 }
 
-func writeKubeletCerts(ctx context.Context, kubeConfigPath, nodeName string) error {
-	_, err := os.Stat(kubeletKubeConfig)
+func writeKubeletCerts(nodeName, caCertPath string) error {
+	_, err := os.Stat(KubeletKubeConfig)
 	if err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 
-	err = os.MkdirAll(kubeletCertDir, 0755)
+	err = os.MkdirAll(KubeletCertDir, 0755)
 	if err != nil {
 		return fmt.Errorf("make kubelet cert dir: %w", err)
 	}
 
-	err = bootstrap.LoadClientCert(
-		ctx,
-		kubeletKubeConfig,
-		kubeConfigPath,
-		kubeletCertDir,
-		types.NodeName(nodeName),
-	)
+	// create kube-config
+	err = certs.CreateKubeConfigFiles(KubeletCertDir, map[string]*certs.KubeConfigSpec{
+		filepath.Base(KubeletKubeConfig): {
+			APIServer:     "https://127.0.0.1:6443",
+			Organizations: []string{"system:nodes"},
+			ClientName:    "system:node:" + string(nodeName),
+		},
+	}, filepath.Dir(caCertPath), "vcluster")
 	if err != nil {
-		return fmt.Errorf("create kubelet certificates: %w", err)
+		return fmt.Errorf("create kubelet kube config: %w", err)
+	}
+
+	// create serving certs
+	caCert, caKey, err := certs.TryLoadCertAndKeyFromDisk(filepath.Dir(caCertPath), certs.CACertAndKeyBaseName)
+	if err != nil {
+		return fmt.Errorf("couldn't create a kubeconfig; the CA files couldn't be loaded: %w", err)
+	}
+	cert := &certs.KubeadmCert{
+		Name:     "kubelet-serving",
+		LongName: "certificate for serving the kubelet",
+		BaseName: "kubelet-serving",
+		CAName:   "ca",
+		Config: certs.CertConfig{
+			Config: certutil.Config{
+				CommonName: nodeName,
+				AltNames: certutil.AltNames{
+					DNSNames: []string{nodeName, "localhost"},
+				},
+				Usages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			},
+		},
+	}
+	err = cert.CreateFromCAIn(KubeletCertDir, caCert, caKey)
+	if err != nil {
+		return fmt.Errorf("create kubelet serving cert: %w", err)
 	}
 
 	return nil
 }
 
-func writeKubeletConfig(path, caCertPath string) error {
+func writeKubeletConfig(ctx context.Context, path, caCertPath, podCIDR string) error {
 	config := &kubeletv1beta1.KubeletConfiguration{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: kubeletv1beta1.SchemeGroupVersion.String(),
 			Kind:       "KubeletConfiguration",
 		},
 	}
+
+	// figure out cgroups
+	kubeletRoot, _, controllers := CheckCgroups()
+	if !controllers["cpu"] {
+		klog.FromContext(ctx).Info("Disabling CPU quotas due to missing cpu controller or cpu.cfs_period_us")
+		config.CPUCFSQuota = ptr.To(false)
+	}
+	if !controllers["pids"] {
+		klog.Fatal("pids cgroup controller not found")
+	}
+	if kubeletRoot != "" {
+		config.KubeletCgroups = kubeletRoot
+	}
 	config.Authentication.X509.ClientCAFile = caCertPath
+	config.Authentication.Anonymous.Enabled = ptr.To(false)
+	config.Authentication.Webhook.Enabled = ptr.To(true)
+	config.Authorization.Mode = kubeletv1beta1.KubeletAuthorizationModeWebhook
+	config.ReadOnlyPort = 0
+	config.PodCIDR = podCIDR
+	config.TLSCertFile = KubeletTLSCertFile
+	config.TLSPrivateKeyFile = KubeletTLSKeyFile
 	config.ResolverConfig = determineKubeletResolvConfPath()
 	config.ContainerRuntimeEndpoint = (&url.URL{Scheme: "unix", Path: containerdSock}).String()
 	config.FailSwapOn = ptr.To(false)

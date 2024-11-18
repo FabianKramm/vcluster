@@ -54,13 +54,12 @@ const (
 // CertConfig is a wrapper around certutil.Config extending it with PublicKeyAlgorithm.
 type CertConfig struct {
 	certutil.Config
-	NotAfter           *time.Time
-	PublicKeyAlgorithm x509.PublicKeyAlgorithm
+	NotAfter *time.Time
 }
 
 // NewCertificateAuthority creates new certificate and private key for the certificate authority
 func NewCertificateAuthority(config *CertConfig) (*x509.Certificate, crypto.Signer, error) {
-	key, err := NewPrivateKey(config.PublicKeyAlgorithm)
+	key, err := NewPrivateKey(x509.RSA)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "unable to create private key while generating CA certificate")
 	}
@@ -79,7 +78,7 @@ func NewCertAndKey(caCert *x509.Certificate, caKey crypto.Signer, config *CertCo
 		return nil, nil, errors.New("must specify at least one ExtKeyUsage")
 	}
 
-	key, err := NewPrivateKey(config.PublicKeyAlgorithm)
+	key, err := NewPrivateKey(x509.RSA)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "unable to create private key")
 	}

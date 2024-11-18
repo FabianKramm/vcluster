@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	vclusterconfig "github.com/loft-sh/vcluster/config"
@@ -32,6 +33,8 @@ func StartK8S(
 	scheduler vclusterconfig.DistroContainer,
 	vConfig *config.VirtualClusterConfig,
 ) error {
+	clusterCIDR := "10.244.0.0/16"
+
 	eg := &errgroup.Group{}
 
 	// start kine embedded or external
@@ -128,8 +131,10 @@ func StartK8S(
 				args = append(args, "--service-account-signing-key-file=/data/pki/sa.key")
 				args = append(args, "--tls-cert-file=/data/pki/apiserver.crt")
 				args = append(args, "--tls-private-key-file=/data/pki/apiserver.key")
-				args = append(args, "--watch-cache=false")
 				args = append(args, "--endpoint-reconciler-type=none")
+				args = append(args, "--kubelet-client-key=/data/pki/apiserver-kubelet-client.key")
+				args = append(args, "--kubelet-client-certificate=/data/pki/apiserver-kubelet-client.crt")
+				args = append(args, "--kubelet-certificate-authority=/data/pki/ca.crt")
 			}
 
 			// add extra args
@@ -145,6 +150,7 @@ func StartK8S(
 			err = command.RunCommand(ctx, args, "apiserver")
 			if err != nil {
 				fmt.Println(err)
+				os.Exit(1)
 				return err
 			}
 
@@ -189,14 +195,18 @@ func StartK8S(
 				} else {
 					args = append(args, "--leader-elect=false")
 				}
-				/*
+				if !vConfig.Experimental.SyncSettings.DisableSync {
 					if vConfig.ControlPlane.Advanced.VirtualScheduler.Enabled {
 						args = append(args, "--controllers=*,-nodeipam,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle,-ttl")
 						args = append(args, "--node-monitor-grace-period=1h")
 						args = append(args, "--node-monitor-period=1h")
 					} else {
 						args = append(args, "--controllers=*,-nodeipam,-nodelifecycle,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle,-ttl")
-					}*/
+					}
+				} else {
+					args = append(args, "--allocate-node-cidrs=true")
+					args = append(args, "--cluster-cidr="+clusterCIDR)
+				}
 			}
 
 			// add extra args
@@ -231,8 +241,14 @@ func StartK8S(
 		})
 	}
 
+	// start cloud controller manager
+	// err = cloudprovider.NewCloudProvider("/data/pki/admin.conf", 2*time.Minute, cloudprovider.DefaultBindPort).Start(ctx)
+	// if err != nil {
+	//	return fmt.Errorf("start cloud controller: %w", err)
+	// }
+
 	// start node
-	err = node.StartNode(ctx, vConfig.VirtualClusterKubeConfig().ServerCACert, "/data/pki/admin.conf")
+	err = node.StartNode(ctx, vConfig.VirtualClusterKubeConfig().ServerCACert, clusterCIDR)
 	if err != nil {
 		return err
 	}

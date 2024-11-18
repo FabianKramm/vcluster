@@ -43,12 +43,6 @@ func RegisterControllers(ctx *synccontext.ControllerContext, syncers []syncertyp
 		}
 	}
 
-	// register controller that keeps CoreDNS NodeHosts config up to date
-	err = registerCoreDNSController(ctx)
-	if err != nil {
-		return err
-	}
-
 	// register init manifests configmap watcher controller
 	err = deploy.RegisterInitManifestsController(ctx)
 	if err != nil {
@@ -246,7 +240,7 @@ func parseMapping(mappings []vclusterconfig.ServiceMapping, fromDefaultNamespace
 	return ret, nil
 }
 
-func registerCoreDNSController(ctx *synccontext.ControllerContext) error {
+func RegisterCoreDNSController(ctx *synccontext.ControllerContext) error {
 	controller := &coredns.NodeHostsReconciler{
 		Client: ctx.VirtualManager.GetClient(),
 		Log:    loghelper.New("corednsnodehosts-controller"),

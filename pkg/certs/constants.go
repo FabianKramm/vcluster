@@ -115,6 +115,8 @@ const (
 	ControllerManagerKubeConfigFileName = "controller-manager.conf"
 	// SchedulerKubeConfigFileName defines the file name for the scheduler's kubeconfig file
 	SchedulerKubeConfigFileName = "scheduler.conf"
+	// KubeProxyConfigFileName defines the file name for the scheduler's kubeconfig file
+	KubeProxyConfigFileName = "kube-proxy.conf"
 
 	// Some well-known users and groups in the core Kubernetes authorization system
 
@@ -122,6 +124,8 @@ const (
 	ControllerManagerUser = "system:kube-controller-manager"
 	// SchedulerUser defines the well-known user the scheduler should be authenticated as
 	SchedulerUser = "system:kube-scheduler"
+	// KubeProxyUser defines the well-known user the kube-proxy should be authenticated as
+	KubeProxyUser = "system:kube-proxy"
 	// SystemPrivilegedGroup defines the well-known group for the apiservers. This group is also superuser by default
 	// (i.e. bound to the cluster-admin ClusterRole)
 	SystemPrivilegedGroup = "system:masters"
@@ -135,6 +139,7 @@ var certMap = map[string]string{
 	AdminKubeConfigFileName:             AdminKubeConfigFileName,
 	ControllerManagerKubeConfigFileName: ControllerManagerKubeConfigFileName,
 	SchedulerKubeConfigFileName:         SchedulerKubeConfigFileName,
+	KubeProxyConfigFileName:             KubeProxyConfigFileName,
 
 	APIServerCertName: APIServerCertName,
 	APIServerKeyName:  APIServerKeyName,

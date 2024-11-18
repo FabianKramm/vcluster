@@ -8,6 +8,7 @@ import (
 
 	"github.com/loft-sh/vcluster/pkg/config"
 	"github.com/loft-sh/vcluster/pkg/controllers"
+	"github.com/loft-sh/vcluster/pkg/controllers/k8sdefaultendpoint"
 	"github.com/loft-sh/vcluster/pkg/controllers/resources/services"
 	"github.com/loft-sh/vcluster/pkg/coredns"
 	"github.com/loft-sh/vcluster/pkg/log"
@@ -42,7 +43,7 @@ func StartControllers(controllerContext *synccontext.ControllerContext, syncers 
 	}
 
 	// start coredns & create syncers
-	if !controllerContext.Config.Experimental.SyncSettings.DisableSync {
+	if !controllerContext.Config.Experimental.SyncSettings.DisableSync || true {
 		// setup CoreDNS according to the manifest file
 		// skip this if both integrated and dedicated coredns
 		// deployments are explicitly disabled
@@ -102,6 +103,18 @@ func StartControllers(controllerContext *synccontext.ControllerContext, syncers 
 		)
 		if err != nil {
 			return errors.Wrap(err, "sync proxied cluster endpoints")
+		}
+	} else if controllerContext.Config.Experimental.SyncSettings.DisableSync {
+		// start default endpoint controller
+		err := k8sdefaultendpoint.Register(controllerContext)
+		if err != nil {
+			return err
+		}
+
+		// register controller that keeps CoreDNS NodeHosts config up to date
+		err = controllers.RegisterCoreDNSController(controllerContext)
+		if err != nil {
+			return err
 		}
 	}
 

@@ -33,19 +33,43 @@ type KubeadmCert struct {
 	// Some attributes will depend on the InitConfiguration, only known at runtime.
 	// These functions will be run in series, passed both the InitConfiguration and a cert Config.
 	configMutators []configMutatorsFunc
-	config         CertConfig
+	Config         CertConfig
 }
 
 // GetConfig returns the definition for the given cert given the provided InitConfiguration
 func (k *KubeadmCert) GetConfig(ic *InitConfiguration) (*CertConfig, error) {
 	for _, f := range k.configMutators {
-		if err := f(ic, &k.config); err != nil {
+		if err := f(ic, &k.Config); err != nil {
 			return nil, err
 		}
 	}
 
-	k.config.PublicKeyAlgorithm = ic.ClusterConfiguration.PublicKeyAlgorithm()
-	return &k.config, nil
+	return &k.Config, nil
+}
+
+// CreateFromCAIn makes and writes a certificate using the given CA cert and key.
+func (k *KubeadmCert) CreateFromCAIn(certDir string, caCert *x509.Certificate, caKey crypto.Signer) error {
+	cfg, err := k.GetConfig(nil)
+	if err != nil {
+		return errors.Wrapf(err, "couldn't create %q certificate", k.Name)
+	}
+	cert, key, err := NewCertAndKey(caCert, caKey, cfg)
+	if err != nil {
+		return err
+	}
+	err = WriteCertificateFilesIfNotExist(
+		certDir,
+		k.BaseName,
+		caCert,
+		cert,
+		key,
+		cfg,
+	)
+	if err != nil {
+		return errors.Wrapf(err, "failed to write or validate certificate %q", k.Name)
+	}
+
+	return nil
 }
 
 // CreateFromCA makes and writes a certificate using the given CA cert and key.
@@ -58,7 +82,7 @@ func (k *KubeadmCert) CreateFromCA(ic *InitConfiguration, caCert *x509.Certifica
 	if err != nil {
 		return err
 	}
-	err = writeCertificateFilesIfNotExist(
+	err = WriteCertificateFilesIfNotExist(
 		ic.CertificatesDir,
 		k.BaseName,
 		caCert,
@@ -236,7 +260,7 @@ func KubeadmCertRootCA() *KubeadmCert {
 		Name:     "ca",
 		LongName: "self-signed Kubernetes CA to provision identities for other Kubernetes components",
 		BaseName: CACertAndKeyBaseName,
-		config: CertConfig{
+		Config: CertConfig{
 			Config: certutil.Config{
 				CommonName: "kubernetes",
 			},
@@ -251,7 +275,7 @@ func KubeadmCertAPIServer() *KubeadmCert {
 		LongName: "certificate for serving the Kubernetes API",
 		BaseName: APIServerCertAndKeyBaseName,
 		CAName:   "ca",
-		config: CertConfig{
+		Config: CertConfig{
 			Config: certutil.Config{
 				CommonName: APIServerCertCommonName,
 				Usages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
@@ -270,7 +294,7 @@ func KubeadmCertKubeletClient() *KubeadmCert {
 		LongName: "certificate for the API server to connect to kubelet",
 		BaseName: APIServerKubeletClientCertAndKeyBaseName,
 		CAName:   "ca",
-		config: CertConfig{
+		Config: CertConfig{
 			Config: certutil.Config{
 				CommonName:   APIServerKubeletClientCertCommonName,
 				Organization: []string{SystemPrivilegedGroup},
@@ -286,7 +310,7 @@ func KubeadmCertFrontProxyCA() *KubeadmCert {
 		Name:     "front-proxy-ca",
 		LongName: "self-signed CA to provision identities for front proxy",
 		BaseName: FrontProxyCACertAndKeyBaseName,
-		config: CertConfig{
+		Config: CertConfig{
 			Config: certutil.Config{
 				CommonName: "front-proxy-ca",
 			},
@@ -301,7 +325,7 @@ func KubeadmCertFrontProxyClient() *KubeadmCert {
 		BaseName: FrontProxyClientCertAndKeyBaseName,
 		LongName: "certificate for the front proxy client",
 		CAName:   "front-proxy-ca",
-		config: CertConfig{
+		Config: CertConfig{
 			Config: certutil.Config{
 				CommonName: FrontProxyClientCertCommonName,
 				Usages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -316,7 +340,7 @@ func KubeadmCertEtcdCA() *KubeadmCert {
 		Name:     "etcd-ca",
 		LongName: "self-signed CA to provision identities for etcd",
 		BaseName: EtcdCACertAndKeyBaseName,
-		config: CertConfig{
+		Config: CertConfig{
 			Config: certutil.Config{
 				CommonName: "etcd-ca",
 			},
@@ -331,7 +355,7 @@ func KubeadmCertEtcdServer() *KubeadmCert {
 		LongName: "certificate for serving etcd",
 		BaseName: EtcdServerCertAndKeyBaseName,
 		CAName:   "etcd-ca",
-		config: CertConfig{
+		Config: CertConfig{
 			Config: certutil.Config{
 				// TODO: etcd 3.2 introduced an undocumented requirement for ClientAuth usage on the
 				// server cert: https://github.com/coreos/etcd/issues/9785#issuecomment-396715692
@@ -354,7 +378,7 @@ func KubeadmCertEtcdPeer() *KubeadmCert {
 		LongName: "certificate for etcd nodes to communicate with each other",
 		BaseName: EtcdPeerCertAndKeyBaseName,
 		CAName:   "etcd-ca",
-		config: CertConfig{
+		Config: CertConfig{
 			Config: certutil.Config{
 				Usages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 			},
@@ -373,7 +397,7 @@ func KubeadmCertEtcdHealthcheck() *KubeadmCert {
 		LongName: "certificate for liveness probes to healthcheck etcd",
 		BaseName: EtcdHealthcheckClientCertAndKeyBaseName,
 		CAName:   "etcd-ca",
-		config: CertConfig{
+		Config: CertConfig{
 			Config: certutil.Config{
 				CommonName:   EtcdHealthcheckClientCertCommonName,
 				Organization: []string{SystemPrivilegedGroup},
@@ -390,7 +414,7 @@ func KubeadmCertEtcdAPIClient() *KubeadmCert {
 		LongName: "certificate the apiserver uses to access etcd",
 		BaseName: APIServerEtcdClientCertAndKeyBaseName,
 		CAName:   "etcd-ca",
-		config: CertConfig{
+		Config: CertConfig{
 			Config: certutil.Config{
 				CommonName:   APIServerEtcdClientCertCommonName,
 				Organization: []string{SystemPrivilegedGroup},
