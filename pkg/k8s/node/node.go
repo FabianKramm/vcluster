@@ -8,7 +8,7 @@ import (
 	nodeutil "k8s.io/component-helpers/node/util"
 )
 
-func StartNode(ctx context.Context, caCertPath, clusterCIDR string) error {
+func StartNode(ctx context.Context, caCertPath, clusterCIDR, clusterDomain string) error {
 	// get node name
 	nodeName, err := nodeutil.GetHostname("")
 	if err != nil {
@@ -40,7 +40,7 @@ func StartNode(ctx context.Context, caCertPath, clusterCIDR string) error {
 	}
 
 	// start kubelet
-	err = StartKubelet(ctx, eg, caCertPath, nodeName, clusterCIDR)
+	err = StartKubelet(ctx, eg, caCertPath, nodeName, clusterCIDR, clusterDomain)
 	if err != nil {
 		return fmt.Errorf("start kubelet: %w", err)
 	}

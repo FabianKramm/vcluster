@@ -241,17 +241,14 @@ func StartK8S(
 		})
 	}
 
-	// start cloud controller manager
-	// err = cloudprovider.NewCloudProvider("/data/pki/admin.conf", 2*time.Minute, cloudprovider.DefaultBindPort).Start(ctx)
-	// if err != nil {
-	//	return fmt.Errorf("start cloud controller: %w", err)
-	// }
-
-	// start node
-	err = node.StartNode(ctx, vConfig.VirtualClusterKubeConfig().ServerCACert, clusterCIDR)
-	if err != nil {
-		return err
-	}
+	go func() {
+		// start node
+		err = node.StartNode(ctx, vConfig.VirtualClusterKubeConfig().ServerCACert, clusterCIDR, vConfig.Networking.Advanced.ClusterDomain)
+		if err != nil {
+			klog.Fatal(err.Error())
+			os.Exit(1)
+		}
+	}()
 
 	// regular stop case, will return as soon as a component returns an error.
 	// we don't expect the components to stop by themselves since they're supposed

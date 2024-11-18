@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"time"
 
 	"github.com/ghodss/yaml"
 	"github.com/loft-sh/vcluster/pkg/certs"
@@ -18,6 +19,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	certutil "k8s.io/client-go/util/cert"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
@@ -34,15 +38,21 @@ const (
 	KubeletConfig      = "/data/kubelet/kubelet-config.yaml"
 )
 
-func StartKubelet(ctx context.Context, eg *errgroup.Group, caCertPath, nodeName, podCIDR string) error {
+func StartKubelet(ctx context.Context, eg *errgroup.Group, caCertPath, nodeName, podCIDR, clusterDomain string) error {
 	// write kubelet certs
 	err := writeKubeletCerts(nodeName, caCertPath)
 	if err != nil {
 		return err
 	}
 
+	// get cluster dns
+	clusterDNS, err := waitForClusterDNS(ctx)
+	if err != nil {
+		return err
+	}
+
 	// write kubelet config
-	err = writeKubeletConfig(ctx, KubeletConfig, caCertPath, podCIDR)
+	err = writeKubeletConfig(ctx, KubeletConfig, caCertPath, podCIDR, clusterDomain, clusterDNS)
 	if err != nil {
 		return fmt.Errorf("write kubelet config: %w", err)
 	}
@@ -80,6 +90,42 @@ func StartKubelet(ctx context.Context, eg *errgroup.Group, caCertPath, nodeName,
 	})
 
 	return nil
+}
+
+func waitForClusterDNS(ctx context.Context) (string, error) {
+	kubeConfig, err := clientcmd.LoadFromFile(KubeletKubeConfig)
+	if err != nil {
+		return "", err
+	}
+	kubeRestConfig, err := clientcmd.NewDefaultClientConfig(*kubeConfig, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		return "", err
+	}
+	kubeClient, err := kubernetes.NewForConfig(kubeRestConfig)
+	if err != nil {
+		return "", err
+	}
+
+	serviceIP := ""
+	err = wait.PollUntilContextCancel(ctx, time.Second*2, true, func(ctx context.Context) (done bool, err error) {
+		service, err := kubeClient.CoreV1().Services("kube-system").Get(ctx, "kube-dns", metav1.GetOptions{})
+		if err != nil {
+			klog.V(1).Info("Couldn't get kube-dns for kubelet", "error", err)
+			return false, nil
+		} else if service.Spec.ClusterIP != "" {
+			serviceIP = service.Spec.ClusterIP
+			return true, nil
+		}
+
+		klog.V(1).Info("Waiting for kube-dns service to receive cluster ip")
+		return false, nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("wait for pod cidr: %w", err)
+	}
+
+	klog.Info("Kube DNS found")
+	return serviceIP, nil
 }
 
 func writeKubeletCerts(nodeName, caCertPath string) error {
@@ -135,7 +181,7 @@ func writeKubeletCerts(nodeName, caCertPath string) error {
 	return nil
 }
 
-func writeKubeletConfig(ctx context.Context, path, caCertPath, podCIDR string) error {
+func writeKubeletConfig(ctx context.Context, path, caCertPath, podCIDR, clusterDomain, clusterDNS string) error {
 	config := &kubeletv1beta1.KubeletConfiguration{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: kubeletv1beta1.SchemeGroupVersion.String(),
@@ -161,6 +207,8 @@ func writeKubeletConfig(ctx context.Context, path, caCertPath, podCIDR string) e
 	config.Authorization.Mode = kubeletv1beta1.KubeletAuthorizationModeWebhook
 	config.ReadOnlyPort = 0
 	config.PodCIDR = podCIDR
+	config.ClusterDomain = clusterDomain
+	config.ClusterDNS = []string{clusterDNS}
 	config.TLSCertFile = KubeletTLSCertFile
 	config.TLSPrivateKeyFile = KubeletTLSKeyFile
 	config.ResolverConfig = determineKubeletResolvConfPath()
