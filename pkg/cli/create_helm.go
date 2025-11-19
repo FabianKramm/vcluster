@@ -115,7 +115,7 @@ type createHelm struct {
 	log              log.Logger
 	kubeClientConfig clientcmd.ClientConfig
 	kubeClient       *kubernetes.Clientset
-	localCluster     bool
+	localTestCluster     bool
 }
 
 func CreateHelm(ctx context.Context, options *CreateOptions, globalFlags *flags.GlobalFlags, vClusterName string, log log.Logger) error {
