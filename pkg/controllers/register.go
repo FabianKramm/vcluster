@@ -26,7 +26,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-func RegisterControllers(ctx *synccontext.ControllerContext, syncers []syncertypes.Object) error {
+func RegisterTestControllers(ctx *synccontext.ControllerContext, syncers []syncertypes.Object) error {
 	registerContext := ctx.ToRegisterContext()
 
 	// register controller that keeps CoreDNS NodeHosts config up to date
