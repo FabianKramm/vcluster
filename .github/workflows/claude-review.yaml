@@ -21,7 +21,6 @@ permissions:
 jobs:
   claude-review-paths:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'loft-sh'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -30,9 +29,10 @@ jobs:
 
       - name: Claude Code Review
         uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
