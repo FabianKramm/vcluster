@@ -88,6 +88,7 @@ sync:
       enabled: false
       syncBackChanges: false
       clearImageStatus: false
+      proxyPermission: false
       selector:
         all: false
         labels: {}

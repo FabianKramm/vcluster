@@ -301,13 +301,71 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
+          count: 5
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "pods", "nodes" ]
+            verbs: [ "get", "watch", "list" ]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "nodes/status", "nodes/metrics", "nodes/stats", "nodes/proxy" ]
+            verbs: [ "get" ]
+
+  - it: real nodes with proxyPermission disabled
+    set:
+      sync:
+        fromHost:
+          nodes:
+            enabled: true
+            proxyPermission: false
+    asserts:
+      - hasDocuments:
+          count: 1
+      - lengthEqual:
+          path: rules
           count: 4
       - contains:
           path: rules
           content:
             apiGroups: [ "" ]
-            resources: [ "pods", "nodes", "nodes/status", "nodes/metrics", "nodes/stats", "nodes/proxy" ]
+            resources: [ "pods", "nodes" ]
             verbs: [ "get", "watch", "list" ]
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "nodes/status", "nodes/metrics", "nodes/stats", "nodes/proxy" ]
+            verbs: [ "get" ]
+
+  - it: real nodes with proxyPermission explicitly enabled
+    set:
+      sync:
+        fromHost:
+          nodes:
+            enabled: true
+            proxyPermission: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - lengthEqual:
+          path: rules
+          count: 5
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "pods", "nodes" ]
+            verbs: [ "get", "watch", "list" ]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "nodes/status", "nodes/metrics", "nodes/stats", "nodes/proxy" ]
+            verbs: [ "get" ]
 
   - it: virtual scheduler
     set:
@@ -341,7 +399,7 @@ tests:
           path: rules
           content:
             apiGroups: [ "" ]
-            resources: [ "pods", "nodes", "nodes/status", "nodes/metrics", "nodes/stats", "nodes/proxy" ]
+            resources: [ "pods", "nodes" ]
             verbs: [ "get", "watch", "list" ]
       - contains:
           path: rules

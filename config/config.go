@@ -1546,6 +1546,9 @@ type SyncNodes struct {
 	// SyncBackChanges enables syncing labels and taints from the virtual cluster to the host cluster. If this is enabled someone within the virtual cluster will be able to change the labels and taints of the host cluster node.
 	SyncBackChanges bool `json:"syncBackChanges,omitempty"`
 
+	// ProxyPermission specifies if the vCluster should get permissions to do nodes/proxy. This is only needed if you want to use applications inside the vCluster that require this (e.g. prometheus stack or other monitoring solutions).
+	ProxyPermission bool `json:"proxyPermission,omitempty"`
+
 	// ClearImageStatus will erase the image status when syncing a node. This allows to hide images that are pulled by the node.
 	ClearImageStatus bool `json:"clearImageStatus,omitempty"`
 

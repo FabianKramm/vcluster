@@ -4792,6 +4792,10 @@
           "type": "boolean",
           "description": "SyncBackChanges enables syncing labels and taints from the virtual cluster to the host cluster. If this is enabled someone within the virtual cluster will be able to change the labels and taints of the host cluster node."
         },
+        "proxyPermission": {
+          "type": "boolean",
+          "description": "ProxyPermission specifies if the vCluster should get permissions to do nodes/proxy. This is only needed if you want to use applications inside the vCluster that require this (e.g. prometheus stack or other monitoring solutions)."
+        },
         "clearImageStatus": {
           "type": "boolean",
           "description": "ClearImageStatus will erase the image status when syncing a node. This allows to hide images that are pulled by the node."
